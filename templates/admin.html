@@ -1,31 +1,81 @@
-<h2>Admin Panel</h2>
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+* { font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+body { background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%); margin: 0; padding: 40px; }
+.container { max-width: 800px; margin: 0 auto; }
+.card { background: white; border-radius: 24px; padding: 40px; margin-bottom: 32px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.15); }
+h1 { color: black; font-size: 28px; font-weight: 700; margin-bottom: 24px; }
+h3 { color: #374151; font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+input { width: 100%; padding: 12px 16px; border: 1px solid #D1D5DB; border-radius: 12px; font-size: 16px; margin-bottom: 16px; box-sizing: border-box; }
+.btn { padding: 12px 24px; background: linear-gradient(to right, #10B981, #059669); color: white; border: none; border-radius: 12px; font-size: 16px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+.btn:hover { transform: translateY(-1px); box-shadow: 0 8px 25px rgba(16,185,129,0.4); }
+.user-item { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 12px; padding: 20px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+.detail-item { background: #F9FAFB; border-left: 4px solid #10B981; padding: 16px; margin-bottom: 8px; border-radius: 8px; }
+hr { border: none; height: 1px; background: #E5E7EB; margin: 32px 0; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="card">
+    <h1>Mntambo Admin</h1>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+      <input id="name" placeholder="Name">
+      <input id="username" placeholder="Username">
+      <input id="password" placeholder="Password" type="password">
+      <select id="role" style="padding: 12px 16px; border: 1px solid #D1D5DB; border-radius: 12px; font-size: 16px;">
+        <option value="employee">Employee</option>
+        <option value="admin">Admin</option>
+      </select>
+    </div>
+    <button onclick="createUser()" class="btn" style="width: 100%; margin-top: 16px;">+ Create User</button>
+  </div>
 
-<input id="name" placeholder="Name">
-<input id="username" placeholder="Username">
-<input id="password" placeholder="Password">
+  <hr>
 
-<button onclick="createUser()">Create User</button>
+  <div class="card">
+    <h3>Users List</h3>
+    <div id="user-list"></div>
+  </div>
 
-<hr>
-
-<h3>Users</h3>
-<div id="user-list"></div>
-<div id="user-details"></div>
+  <div class="card">
+    <h3>User Details</h3>
+    <div id="user-details">Click a user to view attendance logs</div>
+  </div>
+</div>
 
 <script>
 async function createUser() {
-  await fetch('/admin/create-user', {
+  const res = await fetch('/admin/create-user', {
     method: 'POST',
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({
-      name: name.value,
-      username: username.value,
-      password: password.value
+      name: document.getElementById('name').value,
+      username: document.getElementById('username').value,
+      password: document.getElementById('password').value
     })
   });
+  const data = await res.json();
+  alert(data.message || data.error);
+  document.getElementById('name').value = '';
+  document.getElementById('username').value = '';
+  document.getElementById('password').value = '';
+  loadUsers();
+}
 
-  alert("User created");
-  loadUsers(); // Reload users list
+async function deleteUser(userId) {
+  if (confirm(`Delete user ${userId}?`)) {
+    const res = await fetch('/admin/delete-user', {
+      method: 'POST',
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({user_id: userId})
+    });
+    const data = await res.json();
+    alert(data.message || data.error);
+    loadUsers();
+  }
 }
 
 async function loadUsers() {
@@ -33,8 +83,12 @@ async function loadUsers() {
   const users = await res.json();
   const list = document.getElementById('user-list');
   list.innerHTML = users.map(u => `
-    <div style="padding:10px; border-bottom:1px solid #ccc;">
-      ${u[1]} (${u[2]}) <button onclick="loadUser('${u[0]}')">View Details</button>
+    <div class="user-item">
+      <span>${u.name} <small style="color: #6B7280;">(${u.username} - ${u.role})</small></span>
+      <div style="display: flex; gap: 8px;">
+        <button onclick="loadUser('${u.id}')" class="btn">View Details</button>
+        <button onclick="deleteUser('${u.id}')" class="btn" style="background: linear-gradient(to right, #EF4444, #DC2626);">Delete</button>
+      </div>
     </div>
   `).join('');
 }
@@ -44,16 +98,18 @@ async function loadUser(userId) {
   const reports = await res.json();
   const details = document.getElementById('user-details');
   if (reports.length === 0) {
-    details.innerHTML = '<p>No attendance records.</p>';
+    details.innerHTML = '<p style="color: #6B7280; font-style: italic;">No attendance records.</p>';
   } else {
     details.innerHTML = reports.map(r => `
-      <div style="padding:10px; border-bottom:1px solid #ccc;">
-        ${r[0].slice(0,10)}: ${r[1].slice(11,16)} - ${r[2] ? r[2].slice(11,16) : 'N/A'} (${r[3]} hrs)
+      <div class="detail-item">
+        <strong>${r.date}: </strong>${r.sign_in.slice(11,16)} - ${r.sign_out ? r.sign_out.slice(11,16) : 'N/A'} 
+        <span style="float: right; color: #10B981;">${Math.round(r.hours * 10) / 10}h</span>
       </div>
     `).join('');
   }
 }
 
-// Load users on page load
 loadUsers();
 </script>
+</body>
+</html>

@@ -3,39 +3,113 @@
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
-body {
-  font-family: Arial;
-  text-align: center;
-  padding: 20px;
-}
-
-button {
-  width: 90%;
-  padding: 15px;
-  margin: 10px;
-  font-size: 18px;
-  border-radius: 10px;
-  border: none;
-}
-
-.signin { background: green; color: white; }
-.signout { background: red; color: white; }
+* { font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+body { background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%); margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.card { background: white; border-radius: 24px; padding: 48px; max-width: 400px; width: 100%; box-shadow: 0 25px 50px -12px rgba(0, 0,0,0.25); text-align: center; }
+h1 { color: black; font-size: 32px; font-weight: 700; margin-bottom: 8px; }
+.subtitle { color: #6B7280; font-size: 18px; margin-bottom: 40px; }
+.btn { display: block; width: 100%; padding: 16px; margin: 12px 0; border-radius: 16px; border: none; font-size: 18px; font-weight: 500; cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 14px 0 rgba(16, 185, 129,0.4); }
+.btn-signin { background: linear-gradient(to right, #10B981, #059669); color: white; }
+.btn-signin:hover { transform: translateY(-1px); box-shadow: 0 8px 25px 0 rgba(16, 185, 129,0.5); }
+.btn-signout { background: #6B7280; color: white; }
+.btn-signout:hover { background: #4B5563; transform: translateY(-1px); }
 </style>
 </head>
-
 <body>
+<div class="card">
+  <h1>Mntambo Safety Services</h1>
+  <div style="text-align: center; margin-bottom: 40px;">
+    <div style="font-size: 48px; font-weight: 300; color: #10B981; margin-bottom: 8px;" id="date"></div>
+    <p style="font-size: 20px; color: #6B7280;" id="quote">"Safety First, Always"</p>
+  </div>
+  
+  <!-- Todo List -->
+  <h2 style="color: black; font-size: 24px; margin-bottom: 24px;">Today's Tasks</h2>
+  <div style="background: #F9FAFB; border-radius: 16px; padding: 24px; margin-bottom: 32px;">
+    <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+      <input id="todo-input" placeholder="Add task..." style="flex: 1; padding: 12px; border: 1px solid #D1D5DB; border-radius: 12px;">
+      <button onclick="addTodo()" style="padding: 12px 20px; background: #10B981; color: white; border: none; border-radius: 12px; cursor: pointer;">Add</button>
+    </div>
+    <ul id="todo-list" style="list-style: none; padding: 0;"></ul>
+  </div>
 
-<h2>Employee Dashboard</h2>
+  <!-- Nav for Admin -->
+  <div id="admin-nav" style="display: none; background: white; border-radius: 16px; padding: 20px; margin-bottom: 24px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+    <h3 style="margin: 0 0 16px 0; color: black;">Admin Controls</h3>
+    <a href="/admin" style="display: inline-block; padding: 12px 20px; background: linear-gradient(to right, #10B981, #059669); color: white; text-decoration: none; border-radius: 12px; margin-right: 12px; font-weight: 500;">👥 Manage Employees</a>
+    <a href="/report-page" style="display: inline-block; padding: 12px 20px; background: #3B82F6; color: white; text-decoration: none; border-radius: 12px; font-weight: 500;">📊 Reports</a>
+  </div>
 
-<button class="signin" onclick="signin()">Sign In</button>
-<button class="signout" onclick="signout()">Sign Out</button>
-
+  <button class="btn btn-signin" onclick="signin()" style="margin-bottom: 16px;">📍 Sign In</button>
+  <button class="btn btn-signout" onclick="signout()">Sign Out</button>
+</div>
 <script>
+document.addEventListener('DOMContentLoaded', () => {
+  // Date
+  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  document.getElementById('date').textContent = today;
+
+  // Random quote
+  const quotes = [
+    "Safety is not a slogan, it's a way of life.",
+    "Your safety is our priority.",
+    "Stay safe, stay productive.",
+    "Zero accidents, every day.",
+    "Safety doesn't happen by accident."
+  ];
+  document.getElementById('quote').textContent = quotes[Math.floor(Math.random() * quotes.length)];
+
+  // Admin nav
+  const role = '{{ role }}';
+  if (role === 'admin') {
+    document.getElementById('admin-nav').style.display = 'block';
+  }
+
+  // Load todos
+  loadTodos();
+});
+
+function addTodo() {
+  const input = document.getElementById('todo-input');
+  const todo = input.value.trim();
+  if (todo) {
+    const todos = JSON.parse(localStorage.getItem('todos') || '[]');
+    todos.push({ text: todo, checked: false });
+    localStorage.setItem('todos', JSON.stringify(todos));
+    input.value = '';
+    loadTodos();
+  }
+}
+
+function loadTodos() {
+  const todos = JSON.parse(localStorage.getItem('todos') || '[]');
+  const list = document.getElementById('todo-list');
+  list.innerHTML = todos.map((t, i) => `
+    <li style="display: flex; align-items: center; padding: 12px; border-bottom: 1px solid #E5E7EB;">
+      <input type="checkbox" ${t.checked ? 'checked' : ''} onchange="toggleTodo(${i})" style="margin-right: 12px;">
+      <span style="flex: 1; ${t.checked ? 'text-decoration: line-through; color: #6B7280;' : ''}">${t.text}</span>
+      <button onclick="deleteTodo(${i})" style="background: #EF4444; color: white; border: none; border-radius: 8px; padding: 4px 8px; cursor: pointer;">Delete</button>
+    </li>
+  `).join('');
+}
+
+function toggleTodo(i) {
+  const todos = JSON.parse(localStorage.getItem('todos') || '[]');
+  todos[i].checked = !todos[i].checked;
+  localStorage.setItem('todos', JSON.stringify(todos));
+  loadTodos();
+}
+
+function deleteTodo(i) {
+  const todos = JSON.parse(localStorage.getItem('todos') || '[]');
+  todos.splice(i, 1);
+  localStorage.setItem('todos', JSON.stringify(todos));
+  loadTodos();
+}
+
 async function signin() {
-
   navigator.geolocation.getCurrentPosition(async (pos) => {
-
-    await fetch('/signin', {
+    const res = await fetch('/signin', {
       method: 'POST',
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({
@@ -43,20 +117,17 @@ async function signin() {
         lng: pos.coords.longitude
       })
     });
-
-    alert("Signed in with location");
-
-  }, () => {
-    alert("Location required for sign-in");
-  });
-
+    const data = await res.json();
+    alert(data.message || data.error);
+  }, () => alert("Location required for sign-in"));
 }
 
 async function signout() {
-  await fetch('/signout', { method: 'POST' });
-  alert("Signed out");
+  const res = await fetch('/signout', { method: 'POST' });
+  const data = await res.json();
+  sessionStorage.clear();
+  alert(data.message || data.error);
 }
 </script>
-
 </body>
 </html>

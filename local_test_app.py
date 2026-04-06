@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, session, Response, render_template
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
-import psycopg2
+import sqlite3
 from datetime import datetime, date
 import os
 import csv
@@ -9,21 +9,38 @@ import csv
 app = Flask(__name__)
 app.secret_key = "supersecretkey"
 
-# Session Security Config
-app.config.update(
-    SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SECURE=True,
-    SESSION_COOKIE_SAMESITE='Lax'
-)
+# Local SQLite for testing (no Supabase needed)
+DB_PATH = 'attendance.db'
 
-# Database connection updated to discrete parameters
-conn = psycopg2.connect(
-    host="db.cavvrgrzkgandndcyzrl.supabase.co",
-    database="postgres",
-    user="postgres",
-    password="STA.Ad26_P@$$",
-    port=5432
-)
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+# Init DB
+with get_db() as db:
+    db.execute('''CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        username TEXT UNIQUE,
+        password_hash TEXT,
+        role TEXT DEFAULT 'employee'
+    )''')
+    db.execute('''CREATE TABLE IF NOT EXISTS attendance (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        date DATE,
+        sign_in DATETIME,
+        sign_out DATETIME,
+        lat REAL,
+        lng REAL
+    )''')
+    # Sample data
+    hashed_admin = generate_password_hash('STA.Ad26_P@$$')
+    hashed_emp = generate_password_hash('pass')
+    db.execute("INSERT OR IGNORE INTO users (id, name, username, password_hash, role) VALUES (1, 'Simphiwe Phiri', 'simphiwe', ?, 'admin')", (hashed_admin,))
+    db.execute("INSERT OR IGNORE INTO users (id, name, username, password_hash, role) VALUES (2, 'Employee', 'emp', ?, 'employee')", (hashed_emp,))
+    db.commit()
 
 # Auth Decorator
 def login_required(f):
@@ -34,42 +51,46 @@ def login_required(f):
         return f(*args, **kwargs)
     return wrapper
 
-# Root route
 @app.route('/')
 def index():
     return render_template('login.html')
 
-# LOGIN POST
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
-    cur = conn.cursor()
-    cur.execute("SELECT id, password_hash, role FROM users WHERE username=%s", (data['username'],))
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("SELECT id, password_hash, role FROM users WHERE username=?", (data['username'],))
     user = cur.fetchone()
 
-    if user and check_password_hash(user[1], data['password']):
-        session['user_id'] = user[0]
-        session['role'] = user[2]
-        return jsonify({"message": "Login successful", "role": user[2]})
+    if user and check_password_hash(user['password_hash'], data['password']):
+        session['user_id'] = user['id']
+        session['role'] = user['role']
+        return jsonify({"message": "Login successful", "role": user['role']})
     return jsonify({"error": "Invalid credentials"}), 401
 
-# Dashboard
 @app.route('/dashboard')
+@login_required
 def dashboard():
-    return render_template('dashboard.html')
+    role = session.get('role', 'employee')
+    return render_template('dashboard.html', role=role)
 
-# Admin
 @app.route('/admin')
+@login_required
 def admin_page():
+    if session.get('role') != 'admin':
+        return "Access denied. Admin only.", 403
     return render_template('admin.html')
 
-# Report page
 @app.route('/report-page')
+@login_required
 def report_page():
+    if session.get('role') != 'admin':
+        return "Access denied. Admin only.", 403
     return render_template('report.html')
 
-# ADMIN: CREATE USER
 @app.route('/admin/create-user', methods=['POST'])
+@login_required
 def create_user():
     if session.get('role') != 'admin':
         return jsonify({"error": "Unauthorized"}), 403
@@ -77,136 +98,109 @@ def create_user():
     data = request.json
     hashed = generate_password_hash(data['password'])
 
-    cur = conn.cursor()
+    db = get_db()
+    cur = db.cursor()
     cur.execute(
-        "INSERT INTO users (name, username, password_hash, role) VALUES (%s, %s, %s, %s)",
+        "INSERT INTO users (name, username, password_hash, role) VALUES (?, ?, ?, ?)",
         (data['name'], data['username'], hashed, data.get('role', 'employee'))
     )
-    conn.commit()
-
+    db.commit()
     return jsonify({"message": "User created"})
 
-# ADMIN: GET ALL USERS
 @app.route('/admin/users', methods=['GET'])
+@login_required
 def get_users():
     if session.get('role') != 'admin':
         return jsonify({"error": "Unauthorized"}), 403
 
-    cur = conn.cursor()
+    db = get_db()
+    cur = db.cursor()
     cur.execute("SELECT id, name, username, role FROM users")
     users = cur.fetchall()
+    return jsonify([dict(u) for u in users])
 
-    return jsonify(users)
-
-
-# ADMIN: DELETE USER
-@app.route('/admin/delete-user', methods=['POST'])
-def delete_user():
-    if session.get('role') != 'admin':
-        return jsonify({"error": "Unauthorized"}), 403
-
-    data = request.json
-    user_id = data['user_id']
-    
-    cur = conn.cursor()
-    # Delete related attendance first
-    cur.execute("DELETE FROM attendance WHERE user_id=%s", (user_id,))
-    cur.execute("DELETE FROM users WHERE id=%s", (user_id,))
-    conn.commit()
-    
-    return jsonify({"message": "User deleted"})
-
-# SIGN IN with GPS
 @app.route('/signin', methods=['POST'])
 @login_required
 def signin():
-    user_id = session.get('user_id')
+    user_id = session['user_id']
     today = date.today()
     data = request.json
 
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM attendance WHERE user_id=%s AND date=%s", (user_id, today))
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("SELECT * FROM attendance WHERE user_id=? AND date=?", (user_id, today))
     existing = cur.fetchone()
 
     if existing:
         return jsonify({"error": "Already signed in today"})
 
-    # Add columns if missing
-    cur.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS lat NUMERIC")
-    cur.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS lng NUMERIC")
-    conn.commit()
-
     cur.execute(
-        "INSERT INTO attendance (user_id, date, sign_in, lat, lng) VALUES (%s, %s, %s, %s, %s)",
+        "INSERT INTO attendance (user_id, date, sign_in, lat, lng) VALUES (?, ?, ?, ?, ?)",
         (user_id, today, datetime.now(), data.get('lat'), data.get('lng'))
     )
-    conn.commit()
+    db.commit()
     return jsonify({"message": "Signed in with location"})
 
-# SIGN OUT
 @app.route('/signout', methods=['POST'])
 @login_required
 def signout():
-    user_id = session.get('user_id')
+    user_id = session['user_id']
     today = date.today()
 
-    cur = conn.cursor()
+    db = get_db()
+    cur = db.cursor()
     cur.execute(
-        "UPDATE attendance SET sign_out=%s WHERE user_id=%s AND date=%s",
+        "UPDATE attendance SET sign_out=? WHERE user_id=? AND date=?",
         (datetime.now(), user_id, today)
     )
-    conn.commit()
+    db.commit()
     return jsonify({"message": "Signed out"})
 
-# REPORT JSON for charts
 @app.route('/report', methods=['GET'])
 @login_required
 def report():
-    cur = conn.cursor()
+    db = get_db()
+    cur = db.cursor()
     cur.execute("""
         SELECT 
             u.name,
             COUNT(a.id) AS days_present,
-            ROUND(SUM(EXTRACT(EPOCH FROM (a.sign_out - a.sign_in)) / 3600), 2) AS total_hours,
-            ROUND(AVG(EXTRACT(HOUR FROM a.sign_in)), 2) AS avg_sign_in,
-            ROUND(AVG(EXTRACT(HOUR FROM a.sign_out)), 2) AS avg_sign_out,
-            SUM(CASE WHEN EXTRACT(HOUR FROM a.sign_in) > 8 THEN 1 ELSE 0 END) AS late_days,
-            SUM(CASE WHEN EXTRACT(HOUR FROM a.sign_out) < 17 THEN 1 ELSE 0 END) AS early_leaves
+            ROUND(SUM(strftime('%s', a.sign_out) - strftime('%s', a.sign_in)) / 3600.0, 2) AS total_hours
         FROM attendance a
         JOIN users u ON u.id = a.user_id
         WHERE a.sign_out IS NOT NULL
         GROUP BY u.name
     """)
     data = cur.fetchall()
-    return jsonify(data)
+    return jsonify([dict(d) for d in data])
 
-# USER REPORT
 @app.route('/user-report/<user_id>', methods=['GET'])
 @login_required
 def user_report(user_id):
-    cur = conn.cursor()
+    db = get_db()
+    cur = db.cursor()
     cur.execute("""
         SELECT 
             date,
             sign_in,
             sign_out,
-            EXTRACT(EPOCH FROM (sign_out - sign_in)) / 3600 AS hours
+            (strftime('%s', sign_out) - strftime('%s', sign_in)) / 3600.0 AS hours
         FROM attendance
-        WHERE user_id=%s
+        WHERE user_id=?
         ORDER BY date DESC
     """, (user_id,))
-    return jsonify(cur.fetchall())
+    return jsonify([dict(r) for r in cur.fetchall()])
 
-# EXPORT CSV
 @app.route('/export', methods=['GET'])
 @login_required
 def export_csv():
-    cur = conn.cursor()
+    db = get_db()
+    cur = db.cursor()
     cur.execute("""
         SELECT 
             u.name,
             COUNT(a.id),
-            SUM(EXTRACT(EPOCH FROM (a.sign_out - a.sign_in)) / 3600)
+            SUM((strftime('%s', a.sign_out) - strftime('%s', a.sign_in)) / 3600.0)
         FROM attendance a
         JOIN users u ON u.id = a.user_id
         WHERE a.sign_out IS NOT NULL
@@ -223,7 +217,5 @@ def export_csv():
     return Response(generate(), mimetype='text/csv',
         headers={"Content-Disposition": "attachment;filename=report.csv"})
 
-
 if __name__ == "__main__":
     app.run(debug=True)
-
