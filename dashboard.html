@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+body {
+  font-family: Arial;
+  text-align: center;
+  padding: 20px;
+}
+
+button {
+  width: 90%;
+  padding: 15px;
+  margin: 10px;
+  font-size: 18px;
+  border-radius: 10px;
+  border: none;
+}
+
+.signin { background: green; color: white; }
+.signout { background: red; color: white; }
+</style>
+</head>
+
+<body>
+
+<h2>Employee Dashboard</h2>
+
+<button class="signin" onclick="signin()">Sign In</button>
+<button class="signout" onclick="signout()">Sign Out</button>
+
+<script>
+async function signin() {
+  await fetch('/signin', { method: 'POST' });
+  alert("Signed in");
+}
+
+async function signout() {
+  await fetch('/signout', { method: 'POST' });
+  alert("Signed out");
+}
+</script>
+
+</body>
+</html>

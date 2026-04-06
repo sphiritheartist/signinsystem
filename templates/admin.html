@@ -1,0 +1,59 @@
+<h2>Admin Panel</h2>
+
+<input id="name" placeholder="Name">
+<input id="username" placeholder="Username">
+<input id="password" placeholder="Password">
+
+<button onclick="createUser()">Create User</button>
+
+<hr>
+
+<h3>Users</h3>
+<div id="user-list"></div>
+<div id="user-details"></div>
+
+<script>
+async function createUser() {
+  await fetch('/admin/create-user', {
+    method: 'POST',
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      name: name.value,
+      username: username.value,
+      password: password.value
+    })
+  });
+
+  alert("User created");
+  loadUsers(); // Reload users list
+}
+
+async function loadUsers() {
+  const res = await fetch('/admin/users');
+  const users = await res.json();
+  const list = document.getElementById('user-list');
+  list.innerHTML = users.map(u => `
+    <div style="padding:10px; border-bottom:1px solid #ccc;">
+      ${u[1]} (${u[2]}) <button onclick="loadUser('${u[0]}')">View Details</button>
+    </div>
+  `).join('');
+}
+
+async function loadUser(userId) {
+  const res = await fetch(`/user-report/${userId}`);
+  const reports = await res.json();
+  const details = document.getElementById('user-details');
+  if (reports.length === 0) {
+    details.innerHTML = '<p>No attendance records.</p>';
+  } else {
+    details.innerHTML = reports.map(r => `
+      <div style="padding:10px; border-bottom:1px solid #ccc;">
+        ${r[0].slice(0,10)}: ${r[1].slice(11,16)} - ${r[2] ? r[2].slice(11,16) : 'N/A'} (${r[3]} hrs)
+      </div>
+    `).join('');
+  }
+}
+
+// Load users on page load
+loadUsers();
+</script>

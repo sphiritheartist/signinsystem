@@ -1,0 +1,23 @@
+<h2>Admin Panel</h2>
+
+<input id="name" placeholder="Name">
+<input id="username" placeholder="Username">
+<input id="password" placeholder="Password">
+
+<button onclick="createUser()">Create User</button>
+
+<script>
+async function createUser() {
+  await fetch('/admin/create-user', {
+    method: 'POST',
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      name: name.value,
+      username: username.value,
+      password: password.value
+    })
+  });
+
+  alert("User created");
+}
+</script>

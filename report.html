@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+body { font-family: Arial; padding: 10px; }
+canvas { max-width: 100%; }
+</style>
+</head>
+
+<body>
+
+<h2>Analytics Dashboard</h2>
+
+<canvas id="hoursChart"></canvas>
+
+<script>
+fetch('/report')
+.then(res => res.json())
+.then(data => {
+
+  const names = data.map(r => r[0]);
+  const hours = data.map(r => r[2]);
+
+  new Chart(document.getElementById('hoursChart'), {
+    type: 'bar',
+    data: {
+      labels: names,
+      datasets: [{
+        label: 'Total Hours',
+        data: hours
+      }]
+    }
+  });
+
+});
+</script>
+
+</body>
+</html>
