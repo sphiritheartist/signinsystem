@@ -2,28 +2,80 @@ from flask import Flask, request, jsonify, session, Response, render_template
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 import psycopg2
+import sqlite3
+from dotenv import load_dotenv
 from datetime import datetime, date
 import os
 import csv
 
+load_dotenv()
+
 app = Flask(__name__)
-app.secret_key = "supersecretkey"
+app.secret_key = os.getenv('SECRET_KEY', 'supersecretkey')
 
 # Session Security Config
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_SECURE=os.getenv('ENV') == 'production',
     SESSION_COOKIE_SAMESITE='Lax'
 )
 
-# Database connection updated to discrete parameters
-conn = psycopg2.connect(
-    host="db.cavvrgrzkgandndcyzrl.supabase.co",
-    database="postgres",
-    user="postgres",
-    password="STA.Ad26_P@$$",
-    port=5432
-)
+# Database config from env vars (Render-friendly)
+DB_HOST = os.getenv('DB_HOST', 'localhost')
+DB_PORT = os.getenv('DB_PORT', '5432')
+DB_NAME = os.getenv('DB_NAME', 'postgres')
+DB_USER = os.getenv('DB_USER', 'postgres')
+DB_PASS = os.getenv('DB_PASSWORD', '')
+
+# SQLite fallback for local testing
+use_sqlite = (DB_HOST == 'localhost' and not DB_PASS)
+
+if use_sqlite:
+    DB_PATH = 'attendance.db'
+    DB_CONN = None  # Will use function
+
+    def get_db():
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        conn.execute('''CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT DEFAULT 'employee'
+        )''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS attendance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            date DATE NOT NULL,
+            sign_in DATETIME NOT NULL,
+            sign_out DATETIME,
+            lat REAL,
+            lng REAL,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )''')
+        # Sample admin/emp for local testing
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM users")
+        if cur.fetchone()[0] == 0:
+            hashed_admin = generate_password_hash('adminpass')
+            hashed_emp = generate_password_hash('emppass')
+            conn.execute("INSERT INTO users (name, username, password_hash, role) VALUES ('Admin User', 'admin', ?, 'admin')", (hashed_admin,))
+            conn.execute("INSERT INTO users (name, username, password_hash, role) VALUES ('Employee', 'emp', ?, 'employee')", (hashed_emp,))
+            conn.commit()
+        conn.commit()
+        return conn
+else:
+    # PostgreSQL for Render/Supabase
+    DB_CONN = psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASS
+    )
+    def get_db():
+        return DB_CONN
 
 # Auth Decorator
 def login_required(f):
@@ -43,33 +95,48 @@ def index():
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
-    cur = conn.cursor()
-    cur.execute("SELECT id, password_hash, role FROM users WHERE username=%s", (data['username'],))
-    user = cur.fetchone()
+    db = get_db()
+    cur = db.cursor()
+    if use_sqlite:
+        cur.execute("SELECT id, password_hash, role FROM users WHERE username=?", (data['username'],))
+        user = cur.fetchone()
+        if user:
+            user = dict(user)
+    else:
+        cur.execute("SELECT id, password_hash, role FROM users WHERE username=%s", (data['username'],))
+        user = cur.fetchone()
+        if user:
+            user = (user[0], user[1], user[2])
 
-    if user and check_password_hash(user[1], data['password']):
-        session['user_id'] = user[0]
-        session['role'] = user[2]
-        return jsonify({"message": "Login successful", "role": user[2]})
+    if user and check_password_hash(user['password_hash'], data['password']): 
+        session['user_id'] = user['id']
+        session['role'] = user['role']
+        db.close() if use_sqlite else None
+        return jsonify({"message": "Login successful", "role": user['role']})
+    db.close() if use_sqlite else None
     return jsonify({"error": "Invalid credentials"}), 401
 
-# Dashboard
+# Dashboard - pass role for template
 @app.route('/dashboard')
+@login_required
 def dashboard():
-    return render_template('dashboard.html')
+    return render_template('dashboard.html', role=session.get('role', 'employee'))
 
 # Admin
 @app.route('/admin')
+@login_required
 def admin_page():
     return render_template('admin.html')
 
 # Report page
 @app.route('/report-page')
+@login_required
 def report_page():
     return render_template('report.html')
 
 # ADMIN: CREATE USER
 @app.route('/admin/create-user', methods=['POST'])
+@login_required
 def create_user():
     if session.get('role') != 'admin':
         return jsonify({"error": "Unauthorized"}), 403
@@ -77,30 +144,45 @@ def create_user():
     data = request.json
     hashed = generate_password_hash(data['password'])
 
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO users (name, username, password_hash, role) VALUES (%s, %s, %s, %s)",
-        (data['name'], data['username'], hashed, data.get('role', 'employee'))
-    )
-    conn.commit()
-
-    return jsonify({"message": "User created"})
+    db = get_db()
+    cur = db.cursor()
+    try:
+        if use_sqlite:
+            cur.execute(
+                "INSERT INTO users (name, username, password_hash, role) VALUES (?, ?, ?, ?)",
+                (data['name'], data['username'], hashed, data.get('role', 'employee'))
+            )
+        else:
+            cur.execute(
+                "INSERT INTO users (name, username, password_hash, role) VALUES (%s, %s, %s, %s)",
+                (data['name'], data['username'], hashed, data.get('role', 'employee'))
+            )
+        db.commit()
+        db.close() if use_sqlite else None
+        return jsonify({"message": "User created"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 # ADMIN: GET ALL USERS
 @app.route('/admin/users', methods=['GET'])
+@login_required
 def get_users():
     if session.get('role') != 'admin':
         return jsonify({"error": "Unauthorized"}), 403
 
-    cur = conn.cursor()
+    db = get_db()
+    cur = db.cursor()
     cur.execute("SELECT id, name, username, role FROM users")
     users = cur.fetchall()
-
+    if use_sqlite:
+        users = [dict(u) for u in users]
+    db.close() if use_sqlite else None
     return jsonify(users)
 
 
 # ADMIN: DELETE USER
 @app.route('/admin/delete-user', methods=['POST'])
+@login_required
 def delete_user():
     if session.get('role') != 'admin':
         return jsonify({"error": "Unauthorized"}), 403
@@ -108,54 +190,81 @@ def delete_user():
     data = request.json
     user_id = data['user_id']
     
-    cur = conn.cursor()
-    # Delete related attendance first
-    cur.execute("DELETE FROM attendance WHERE user_id=%s", (user_id,))
-    cur.execute("DELETE FROM users WHERE id=%s", (user_id,))
-    conn.commit()
-    
-    return jsonify({"message": "User deleted"})
+    db = get_db()
+    cur = db.cursor()
+    try:
+        if use_sqlite:
+            cur.execute("DELETE FROM attendance WHERE user_id=?", (user_id,))
+            cur.execute("DELETE FROM users WHERE id=?", (user_id,))
+        else:
+            cur.execute("DELETE FROM attendance WHERE user_id=%s", (user_id,))
+            cur.execute("DELETE FROM users WHERE id=%s", (user_id,))
+        db.commit()
+        db.close() if use_sqlite else None
+        return jsonify({"message": "User deleted"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 # SIGN IN with GPS
 @app.route('/signin', methods=['POST'])
 @login_required
 def signin():
-    user_id = session.get('user_id')
+    user_id = session['user_id']
     today = date.today()
     data = request.json
 
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM attendance WHERE user_id=%s AND date=%s", (user_id, today))
-    existing = cur.fetchone()
+    db = get_db()
+    cur = db.cursor()
+    if use_sqlite:
+        cur.execute("SELECT * FROM attendance WHERE user_id=? AND date=?", (user_id, today))
+        existing = cur.fetchone()
+    else:
+        cur.execute("SELECT * FROM attendance WHERE user_id=%s AND date=%s", (user_id, today))
+        existing = cur.fetchone()
 
     if existing:
+        db.close() if use_sqlite else None
         return jsonify({"error": "Already signed in today"})
 
-    # Add columns if missing
-    cur.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS lat NUMERIC")
-    cur.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS lng NUMERIC")
-    conn.commit()
-
-    cur.execute(
-        "INSERT INTO attendance (user_id, date, sign_in, lat, lng) VALUES (%s, %s, %s, %s, %s)",
-        (user_id, today, datetime.now(), data.get('lat'), data.get('lng'))
-    )
-    conn.commit()
+    if use_sqlite:
+        cur.execute(
+            "INSERT INTO attendance (user_id, date, sign_in, lat, lng) VALUES (?, ?, ?, ?, ?)",
+            (user_id, today, datetime.now(), data.get('lat'), data.get('lng'))
+        )
+    else:
+        # Add columns if missing
+        cur.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS lat NUMERIC")
+        cur.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS lng NUMERIC")
+        db.commit()
+        cur.execute(
+            "INSERT INTO attendance (user_id, date, sign_in, lat, lng) VALUES (%s, %s, %s, %s, %s)",
+            (user_id, today, datetime.now(), data.get('lat'), data.get('lng'))
+        )
+    db.commit()
+    db.close() if use_sqlite else None
     return jsonify({"message": "Signed in with location"})
 
 # SIGN OUT
 @app.route('/signout', methods=['POST'])
 @login_required
 def signout():
-    user_id = session.get('user_id')
+    user_id = session['user_id']
     today = date.today()
 
-    cur = conn.cursor()
-    cur.execute(
-        "UPDATE attendance SET sign_out=%s WHERE user_id=%s AND date=%s",
-        (datetime.now(), user_id, today)
-    )
-    conn.commit()
+    db = get_db()
+    cur = db.cursor()
+    if use_sqlite:
+        cur.execute(
+            "UPDATE attendance SET sign_out=? WHERE user_id=? AND date=?",
+            (datetime.now(), user_id, today)
+        )
+    else:
+        cur.execute(
+            "UPDATE attendance SET sign_out=%s WHERE user_id=%s AND date=%s",
+            (datetime.now(), user_id, today)
+        )
+    db.commit()
+    db.close() if use_sqlite else None
     return jsonify({"message": "Signed out"})
 
 # REPORT JSON for charts
