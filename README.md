@@ -11,11 +11,11 @@
 1. Push to GitHub
 2. Connect to Render
 3. Set Environment Variables (from .env.example):
-   - DB_HOST=db.cavvrgrzkgandndcyzrl.supabase.co
+   - DB_HOST=hostlink - not actual
    - DB_PORT=5432
    - DB_NAME=postgres
    - DB_USER=postgres
-   - DB_PASSWORD=STA.Ad26_P@$$
+   - DB_PASSWORD=PASSWORD - not actual
    - SECRET_KEY=your-strong-secret
    - ENV=production
 4. Build Command: `pip install -r requirements.txt`

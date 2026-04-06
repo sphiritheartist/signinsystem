@@ -75,6 +75,7 @@ else:
         password=DB_PASS
     )
     def get_db():
+        cur = DB_CONN.cursor()
         return DB_CONN
 
 # Auth Decorator
